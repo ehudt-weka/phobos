@@ -1136,6 +1136,23 @@ public:
     assert(b == [ 3, 4, 5 ]);
 }
 
+// A `ref` parameter binds to a forward range's `front` when `front` is an lvalue
+@safe unittest
+{
+    static struct Fwd
+    {
+        int front;
+        int left = 3;
+        bool empty() const { return left == 0; }
+        void popFront() { --left; }
+        Fwd save() { return this; }
+    }
+
+    int[] seen;
+    Fwd(1).each!((ref e) { seen ~= e; e *= 2; });
+    assert(seen == [1, 2, 4]);
+}
+
 // https://issues.dlang.org/show_bug.cgi?id=15358
 // application of `each` with >2 args (opApply)
 @system unittest

@@ -172,9 +172,9 @@ Params:
 Returns:
     `true` if R is an input range (possibly with element type `E`), `false` if not
  */
-// `R.sizeof` lays out a struct before the lambdas below infer its member functions' attributes: a range
-// trait evaluated inside the struct's own declaration (a member's return type, like `Chunks.opSlice`) would
-// otherwise infer those members impure and `@system`.
+// `R.sizeof` lays out a struct before the lambdas below infer its member functions' attributes,
+// as `R.init` did: a range trait evaluated inside the struct's own declaration (in a member's
+// return type, like `Chunks.opSlice`) would otherwise infer those members impure and `@system`.
 enum bool isInputRange(R) =
     is(typeof(lvalueOf!R) == R) && is(typeof(R.sizeof))
     && is(typeof((R r) { return r.empty; } (rvalueOf!R)) == bool)
@@ -284,6 +284,26 @@ enum bool isInputRange(R, E) =
 
     static assert(isInputRange!R);
     assert(r.equal([ 0, 1, 2 ]));
+}
+
+// A range type with a member named `init`, here from a mixin template, hides the built-in `.init`
+@safe unittest
+{
+    mixin template SetUp()
+    {
+        void init(int v) { i = v; }
+    }
+    static struct R
+    {
+        int i;
+        bool empty() const { return i >= 3; }
+        int front() const { return i; }
+        void popFront() { ++i; }
+        R save() { return this; }
+        mixin SetUp;
+    }
+    static assert(isInputRange!R);
+    static assert(isForwardRange!R);
 }
 
 /+
@@ -1366,9 +1386,10 @@ enum bool hasMobileElements(R) =
     static assert( hasMobileElements!(dchar[]));
 }
 
-// `r.front` / `r.back` in a return statement, so a member function is called whether or not it is a `@property`
-// (in a bare `typeof(r.front)` it is not), a field or a `ref` result is returned by reference (no copy, so a
-// non-copyable element type is answered too), and no `.init` of the element type is ever built.
+// `r.front` / `r.back` in a return statement, so a member function is called whether or not
+// it is a `@property` (in a bare `typeof(r.front)` it is not), a field or a `ref` result is
+// returned by reference (no copy, so a non-copyable element type is answered too), and no
+// `.init` of the element type is built.
 private auto ref frontOf(R)(return ref R r) { return r.front; }
 private auto ref backOf(R)(return ref R r) { return r.back; }
 
@@ -1460,6 +1481,53 @@ template ElementType(R)
         E front() { return E.init; }
     }
     static assert(is(ElementType!R == E));
+}
+
+// The range traits also work when no primitive is a `@property`
+@safe unittest
+{
+    static struct R
+    {
+        size_t i;
+        bool empty() const { return i >= 3; }
+        int front() const { return cast(int) i; }
+        void popFront() { ++i; }
+        R save() { return this; }
+        int back() const { return cast(int) i; }
+        void popBack() { ++i; }
+        size_t length() const { return 3 - i; }
+        R opSlice(size_t, size_t) { return this; }
+    }
+    static assert(isInputRange!R);
+    static assert(isForwardRange!R);
+    static assert(isBidirectionalRange!R);
+    static assert(hasSlicing!R);
+    static assert(is(ElementType!R == int));
+}
+
+// An element type with a member named `init`, here from a mixin template, hides the built-in `.init`
+@safe unittest
+{
+    mixin template SetUp()
+    {
+        void init(int v) { x = v; }
+    }
+    static struct S
+    {
+        int x;
+        mixin SetUp;
+    }
+    static assert(is(ElementType!(S[]) == S));
+    static assert(isRandomAccessRange!(S[]));
+}
+
+// A variable of an enum type whose base type is a non-string array has no `front`
+@safe unittest
+{
+    enum E : int[] { a = [1, 2] }
+    E e = E.a;
+    static assert(!__traits(compiles, e.front));
+    static assert(is(ElementType!E == void));
 }
 
 /**

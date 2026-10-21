@@ -7295,9 +7295,9 @@ enum bool isAggregateType(T) = is(T == struct) || is(T == union) ||
  * that define `opApply` with a single loop variable, and builtin dynamic,
  * static and associative arrays.
  */
-// An lvalue serves opApply (a null dereference: an opApply taking a `ref` `@safe` delegate
-// refuses `lvalueOf!T`, and every opApply refuses `rvalueOf!T`); an rvalue serves a
-// non-copyable range, which foreach would otherwise copy.
+// `*p` is for an opApply taking a `@safe` delegate: in a function literal whose attributes are
+// inferred, a call to the bodyless `lvalueOf!T` or `rvalueOf!T` makes the loop body's delegate
+// `@system`. `rvalueOf!T` is for a non-copyable range, which `foreach` over `*p` would copy.
 enum bool isIterable(T) = is(typeof({ T* p = null; foreach (elem; *p) {} }))
                        || is(typeof({ foreach (elem; rvalueOf!T) {} }));
 
@@ -7322,6 +7322,28 @@ enum bool isIterable(T) = is(typeof({ T* p = null; foreach (elem; *p) {} }))
     static assert( isIterable!Range);
 
     static assert(!isIterable!uint);
+}
+
+// `opApply` with a `ref` `@safe` delegate, and a range that cannot be copied
+@safe unittest
+{
+    static struct SafeOpApply
+    {
+        int opApply(scope int delegate(ref int) @safe dg) @safe { int x; return dg(x); }
+    }
+
+    static struct NoCopyRange
+    {
+        @disable this(this);
+        enum bool empty = false;
+        int front() { return 0; }
+        void popFront() {}
+    }
+
+    static assert(isIterable!SafeOpApply);
+    static assert(isIterable!NoCopyRange);
+    static assert(is(ForeachType!SafeOpApply == int));
+    static assert(is(ForeachType!NoCopyRange == int));
 }
 
 /**
@@ -8083,6 +8105,7 @@ has both opApply and a range interface.
 */
 template ForeachType(T)
 {
+    // See `isIterable` for the two forms.
     static if (is(typeof({ T* p = null; foreach (elem; *p) {} })))
     {
         alias ForeachType = typeof(
@@ -9088,10 +9111,18 @@ enum bool allSameType(Ts...) =
 */
 template ifTestable(T, alias pred = a => a)
 {
-    // See `isAggregateOperand`: a scalar's `.init` converts by value range (`int` to `ubyte`) and a
-    // null literal to any qualifier, which a function result does not.
     static if (isAggregateOperand!T)
-        enum ifTestable = __traits(compiles, { if (pred(rvalueOf!T)) {} });
+    {
+        // See `CommonType`: only a struct or union operand avoids `.init`. The literal `T.init`
+        // is unique, so where `pred` does not take a `T` it converted to any other qualifier of
+        // `T`; an rvalue of each stands in.
+        enum testable(U) = __traits(compiles, { if (pred(rvalueOf!U)) {} });
+        alias U = Unqual!T;
+        static if (__traits(compiles, pred(rvalueOf!T)))
+            enum ifTestable = testable!T;
+        else
+            enum ifTestable = anySatisfy!(testable, U, const U, immutable U, shared U, shared const U);
+    }
     else
         enum ifTestable = __traits(compiles, { if (pred(T.init)) {} });
 }
@@ -9132,6 +9163,13 @@ template ifTestable(T, alias pred = a => a)
     static assert( ifTestable!(int*, (immutable(int)* p) => p));
     static assert( ifTestable!(int[], (immutable(int)[] a) => a));
     static assert( ifTestable!(C, (immutable C c) => c));
+
+    struct P
+    {
+        int* p;
+        bool opCast(T : bool)() const { return p !is null; }
+    }
+    static assert( ifTestable!(P, (immutable P a) => a));
 }
 
 /**

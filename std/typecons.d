@@ -2297,6 +2297,8 @@ enum isTuple(T) = is(Unqual!T == Tuple!Specs, Specs...) ||
 {
     static assert(isTuple!(const Tuple!(int)));
     static assert(isTuple!(immutable Tuple!(int)));
+    static assert(isTuple!(const Tuple!(int[], int)));
+    static assert(isTuple!(immutable Tuple!(int*)));
 
     static assert(!isTuple!(int));
     static assert(!isTuple!(const int));
